@@ -1,5 +1,6 @@
 using Jarvis.AI.Ollama;
 using Jarvis.Core.AI;
+using Jarvis.Core.Tools;
 using Jarvis.Desktop;
 using Jarvis.Desktop.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,6 +26,7 @@ public sealed class DesktopCompositionTests
             Assert.Equal("JARVIS Test", options.ApplicationName);
             Assert.True(registrationProbe.IsService(typeof(MainWindow)));
             Assert.IsType<OllamaLlmProvider>(host.Services.GetRequiredService<ILlmProvider>());
+            Assert.Empty(host.Services.GetRequiredService<IToolRegistry>().Descriptors);
             Assert.NotNull(host.Services.GetService<ILoggerFactory>());
         }
         finally
@@ -80,4 +82,37 @@ public sealed class DesktopCompositionTests
 
         await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync());
     }
+
+    [Fact]
+    public void ServiceCollection_WhenFakeToolIsExplicitlyRegistered_ResolvesItFromRegistry()
+    {
+        var tool = new FakeTool();
+        var services = new ServiceCollection();
+        services.AddSingleton<IJarvisTool>(tool);
+        services.AddTransient<IToolRegistry, ToolRegistry>();
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var result = serviceProvider
+            .GetRequiredService<IToolRegistry>()
+            .Resolve(tool.Descriptor.Name);
+
+        Assert.True(result.Success);
+        Assert.Same(tool, result.Tool);
+    }
+
+    private sealed class FakeTool : IJarvisTool
+    {
+        public ToolDescriptor Descriptor { get; } = new(
+            "fake_tool",
+            "Fake tool used only for DI composition testing.",
+            ToolRiskLevel.Safe,
+            typeof(FakeArguments));
+
+        public Task<ToolExecutionResult> ExecuteAsync(
+            ToolExecutionContext context,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Composition tests must not execute tools.");
+    }
+
+    private sealed record FakeArguments(string Value) : IToolArguments;
 }

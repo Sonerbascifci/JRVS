@@ -1,6 +1,7 @@
 using System.Windows;
 using Jarvis.AI.Ollama;
 using Jarvis.Core.AI;
+using Jarvis.Core.Tools;
 using Jarvis.Desktop.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -50,6 +51,7 @@ public partial class App : Application
         });
         builder.Services.AddTransient<ILlmProvider>(
             services => services.GetRequiredService<OllamaLlmProvider>());
+        builder.Services.AddTransient<IToolRegistry, ToolRegistry>();
 
         builder.Services.AddSingleton<MainWindow>();
 

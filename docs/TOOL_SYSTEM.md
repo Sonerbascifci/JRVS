@@ -224,6 +224,13 @@ Registry responsibilities:
 
 The registry does not decide permissions.
 
+Initial registry behavior:
+
+- tools are registered explicitly through the composition root,
+- names use ordinal, case-sensitive comparison,
+- registrations and descriptors are captured as an immutable construction-time snapshot,
+- resolving a tool does not authorize or execute it.
+
 ## 10. Permission evaluator
 
 `IPermissionEvaluator` determines required behavior from trusted tool metadata and application policy.

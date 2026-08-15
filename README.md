@@ -47,6 +47,6 @@ See:
 
 ## Current phase
 
-**AI-001 — Ollama Provider** is complete.
+**TOOL-001 — Tool Registry** is complete.
 
-The next backlog item is **TOOL-001 — Tool Registry**.
+The next backlog item is **SEC-001 — Permission Engine**.
