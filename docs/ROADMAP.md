@@ -96,14 +96,20 @@ Connect to local Ollama through `ILlmProvider`.
 ## AI-002 — Structured Tool Calling
 
 ### Goal
-Allow supported local models to request registered tools.
+Allow supported local models to request model-visible tools through a typed,
+provider-independent protocol.
 
 ### Scope
-- tool schema mapping,
-- tool-call parsing,
-- tool result round-trip,
-- maximum agent step count,
-- malformed response handling.
+- project trusted tool descriptors without security-policy metadata,
+- map typed argument schemas to provider-native tool definitions,
+- parse ordered provider-native tool calls into typed Core contracts,
+- round-trip assistant tool-call history and structured tool results,
+- reject unavailable tools and malformed arguments without execution.
+
+### Out of scope
+- tool resolution and execution,
+- permission and confirmation orchestration,
+- agent-loop and maximum-step enforcement.
 
 ---
 
@@ -131,6 +137,14 @@ Deterministic routes must use the same tool and permission pipeline as LLM route
 - metadata,
 - typed argument validation,
 - execution abstraction.
+
+## TOOL-002 — Tool Execution Pipeline
+
+- resolve requested tools through the trusted registry,
+- evaluate permission and confirmation policy before execution,
+- execute approved calls and preserve real tool failures,
+- append structured results for the next model turn,
+- enforce maximum agent steps without bypassing the permission engine.
 
 ## SEC-001 — Permission Engine
 

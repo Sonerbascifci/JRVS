@@ -40,6 +40,15 @@ public sealed class ContractSecurityTests
         Assert.Null(typeof(ToolCallRequest).GetProperty(propertyName));
     }
 
+    [Theory]
+    [InlineData("RiskLevel")]
+    [InlineData("RequiresConfirmation")]
+    [InlineData("PermissionOverride")]
+    public void LlmToolDefinition_DoesNotExposeSecurityPolicyFields(string propertyName)
+    {
+        Assert.Null(typeof(LlmToolDefinition).GetProperty(propertyName));
+    }
+
     [Fact]
     public void ToolCallRequest_UsesTypedArgumentsContract()
     {

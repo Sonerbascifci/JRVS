@@ -48,6 +48,14 @@ Requirements:
 - cancellation,
 - graceful degradation if unavailable.
 
+Structured tool-calling protocol:
+- use Ollama `/api/chat` with `stream: false` and native `tools` / `tool_calls`,
+- derive tool schemas from the same strict camelCase JSON contract used to parse
+  typed arguments,
+- preserve assistant text and ordered tool calls,
+- return unavailable tools and malformed arguments as controlled failures,
+- keep risk, permission, confirmation and execution outside the provider adapter.
+
 ## 3. Model selection
 
 Do not optimize prematurely.

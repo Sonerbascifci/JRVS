@@ -1,3 +1,4 @@
+using Jarvis.Core.Common;
 using Jarvis.Core.Tools;
 
 namespace Jarvis.Core.Permissions;
@@ -61,13 +62,71 @@ public enum ConfirmationResult
     Cancelled
 }
 
+public sealed record ConfirmationResponse
+{
+    public ConfirmationResponse(
+        ConfirmationResult result,
+        string requestId,
+        string toolName,
+        string actionFingerprint)
+    {
+        if (!Enum.IsDefined(result))
+        {
+            throw new ArgumentOutOfRangeException(nameof(result), result, "Unknown confirmation result.");
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(actionFingerprint);
+
+        Result = result;
+        RequestId = requestId;
+        ToolName = toolName;
+        ActionFingerprint = actionFingerprint;
+    }
+
+    public ConfirmationResult Result { get; }
+
+    public string RequestId { get; }
+
+    public string ToolName { get; }
+
+    public string ActionFingerprint { get; }
+}
+
+public sealed record ConfirmationValidationResult
+{
+    private ConfirmationValidationResult(bool isValid, Failure? failure)
+    {
+        IsValid = isValid;
+        Failure = failure;
+    }
+
+    public bool IsValid { get; }
+
+    public Failure? Failure { get; }
+
+    public static ConfirmationValidationResult Valid() =>
+        new(isValid: true, failure: null);
+
+    public static ConfirmationValidationResult Invalid(FailureCode code, string message) =>
+        new(isValid: false, new Failure(code, message));
+}
+
+public interface IConfirmationValidator
+{
+    ConfirmationValidationResult Validate(
+        ConfirmationRequest? request,
+        ConfirmationResponse? response);
+}
+
 /// <summary>
 /// Trusted user-interface boundary. Model output must never be converted directly
-/// into a <see cref="ConfirmationResult"/>.
+/// into a <see cref="ConfirmationResponse"/>.
 /// </summary>
 public interface IUserConfirmationService
 {
-    Task<ConfirmationResult> RequestConfirmationAsync(
+    Task<ConfirmationResponse> RequestConfirmationAsync(
         ConfirmationRequest request,
         CancellationToken cancellationToken);
 }

@@ -53,7 +53,7 @@ Examples:
 - open URL,
 - git status.
 
-May execute without confirmation.
+Permission decision in v0.1: `Allow`.
 
 ### Confirm
 Actions that modify user state or could cause loss/interruption.
@@ -64,7 +64,7 @@ Examples:
 - git pull,
 - modify configuration.
 
-Must request confirmation.
+Permission decision in v0.1: `RequireConfirmation`.
 
 ### Critical
 High-impact or privileged actions.
@@ -77,7 +77,10 @@ Examples:
 - send sensitive external communications,
 - arbitrary shell execution.
 
-Disabled by default until intentionally implemented.
+Permission decision in v0.1: `Deny`.
+
+These decisions come only from the trusted `ToolDescriptor.RiskLevel`. Model output,
+tool-call arguments and user-provided permission fields cannot override them.
 
 ## 4. Confirmation security
 
@@ -99,6 +102,10 @@ A confirmation object should be tied to:
 - expiration time.
 
 Changing arguments invalidates confirmation.
+
+An approval is valid only when its request identifier, tool name and opaque action
+fingerprint exactly match the expected request and its expiration is later than the
+trusted current time. A bare `Approved` value is not execution authority.
 
 ## 5. Shell policy
 
@@ -127,6 +134,11 @@ Good:
 ```text
 git_status(repositoryPath)
 ```
+
+`open_application` accepts only a logical application identifier. A trusted,
+explicitly configured catalog maps that identifier to an executable. Caller-provided
+executable paths and command-line arguments are never launched. Command interpreters
+and script hosts are blocked from this catalog in v0.1.
 
 ## 6. File-system policy
 

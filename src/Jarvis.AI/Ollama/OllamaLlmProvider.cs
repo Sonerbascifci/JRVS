@@ -2,8 +2,13 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Schema;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Jarvis.Core.AI;
 using Jarvis.Core.Common;
+using Jarvis.Core.Tools;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -11,7 +16,21 @@ namespace Jarvis.AI.Ollama;
 
 public sealed class OllamaLlmProvider : ILlmProvider
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions ProviderJsonOptions = new(JsonSerializerDefaults.Web);
+
+    private static readonly JsonSerializerOptions ToolJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = false,
+        RespectNullableAnnotations = true,
+        RespectRequiredConstructorParameters = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+
+    private static readonly JsonSchemaExporterOptions SchemaOptions = new()
+    {
+        TreatNullObliviousAsNonNullable = true
+    };
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<OllamaLlmProvider> _logger;
@@ -46,32 +65,22 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 "The Ollama request was cancelled.");
         }
 
-        if (request.ToolResults.Count > 0
-            || request.Messages.Any(message => message.Role == ConversationRole.Tool))
-        {
-            return LlmProviderResult.Failed(
-                FailureCode.Unsupported,
-                "Tool messages and tool results are not supported by the AI-001 Ollama provider.");
-        }
-
-        var providerRequest = new OllamaChatRequest(
-            _model,
-            request.Messages.Select(MapMessage).ToArray(),
-            Stream: false);
         var startedAt = Stopwatch.GetTimestamp();
 
         _logger.LogInformation(
-            "OllamaRequestStarted Model={Model}",
-            _model);
+            "OllamaRequestStarted Model={Model} ToolDefinitionCount={ToolDefinitionCount}",
+            _model,
+            request.AvailableTools.Count);
 
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutSource.CancelAfter(_timeout);
 
         try
         {
+            var providerRequest = MapRequest(request);
             using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "api/chat")
             {
-                Content = JsonContent.Create(providerRequest, options: JsonOptions)
+                Content = JsonContent.Create(providerRequest, options: ProviderJsonOptions)
             };
             using var response = await _httpClient.SendAsync(
                 httpRequest,
@@ -86,7 +95,7 @@ public sealed class OllamaLlmProvider : ILlmProvider
             }
 
             var providerResponse = await response.Content.ReadFromJsonAsync<OllamaChatResponse>(
-                JsonOptions,
+                ProviderJsonOptions,
                 timeoutSource.Token);
 
             if (providerResponse is null)
@@ -99,23 +108,43 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 return InvalidResponse("Ollama failed to generate a response.", startedAt);
             }
 
-            if (ContainsToolCalls(providerResponse.Message?.ToolCalls))
-            {
-                var failure = new Failure(
-                    FailureCode.Unsupported,
-                    "Ollama tool calls are not supported by the AI-001 provider.");
-                LogFailure("OllamaResponseUnsupported", failure, response.StatusCode, startedAt);
-                return LlmProviderResult.Failed(failure.Code, failure.Message);
-            }
-
             var assistantMessage = providerResponse.Message;
             if (assistantMessage is null
-                || !string.Equals(assistantMessage.Role, "assistant", StringComparison.Ordinal)
-                || string.IsNullOrWhiteSpace(assistantMessage.Content))
+                || !string.Equals(assistantMessage.Role, "assistant", StringComparison.Ordinal))
             {
                 return InvalidResponse(
-                    "Ollama returned an empty or invalid assistant response.",
+                    "Ollama returned an invalid assistant response.",
                     startedAt);
+            }
+
+            var parsedToolCalls = ParseToolCalls(
+                assistantMessage.ToolCalls,
+                request.AvailableTools);
+            if (parsedToolCalls.Failure is not null)
+            {
+                LogFailure(
+                    "OllamaToolCallRejected",
+                    parsedToolCalls.Failure,
+                    response.StatusCode,
+                    startedAt);
+                return LlmProviderResult.Failed(
+                    parsedToolCalls.Failure.Code,
+                    parsedToolCalls.Failure.Message);
+            }
+
+            if (string.IsNullOrWhiteSpace(assistantMessage.Content)
+                && parsedToolCalls.ToolCalls.Count == 0)
+            {
+                return InvalidResponse(
+                    "Ollama returned an empty assistant response.",
+                    startedAt);
+            }
+
+            if (parsedToolCalls.ToolCalls.Count > 0)
+            {
+                _logger.LogInformation(
+                    "OllamaToolCallsReceived Count={ToolCallCount}",
+                    parsedToolCalls.ToolCalls.Count);
             }
 
             _logger.LogInformation(
@@ -124,7 +153,8 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 (int)response.StatusCode,
                 GetElapsedMilliseconds(startedAt));
 
-            return LlmProviderResult.Succeeded(new LlmResponse(assistantMessage.Content));
+            return LlmProviderResult.Succeeded(
+                new LlmResponse(assistantMessage.Content, parsedToolCalls.ToolCalls));
         }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -144,6 +174,14 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 FailureCode.Unavailable,
                 "The local Ollama service is unavailable.");
             LogException("OllamaUnavailable", failure, exception, startedAt);
+            return LlmProviderResult.Failed(failure.Code, failure.Message);
+        }
+        catch (NotSupportedException exception)
+        {
+            var failure = new Failure(
+                FailureCode.Unsupported,
+                "An available tool cannot be represented by the Ollama provider.");
+            LogException("OllamaToolSchemaUnsupported", failure, exception, startedAt);
             return LlmProviderResult.Failed(failure.Code, failure.Message);
         }
         catch (JsonException exception)
@@ -191,7 +229,7 @@ public sealed class OllamaLlmProvider : ILlmProvider
             }
 
             var tags = await response.Content.ReadFromJsonAsync<OllamaTagsResponse>(
-                JsonOptions,
+                ProviderJsonOptions,
                 timeoutSource.Token);
             if (tags?.Models is null)
             {
@@ -262,8 +300,26 @@ public sealed class OllamaLlmProvider : ILlmProvider
         }
     }
 
-    private static OllamaRequestMessage MapMessage(ConversationMessage message) =>
-        new(
+    private OllamaChatRequest MapRequest(LlmRequest request)
+    {
+        var messages = request.Messages
+            .Select(MapMessage)
+            .Concat(request.ToolResults.Select(MapToolResult))
+            .ToArray();
+        var tools = request.AvailableTools.Count == 0
+            ? null
+            : request.AvailableTools.Select(MapToolDefinition).ToArray();
+
+        return new OllamaChatRequest(_model, messages, Stream: false, tools);
+    }
+
+    private static OllamaRequestMessage MapMessage(ConversationMessage message)
+    {
+        var toolCalls = message.ToolCalls.Count == 0
+            ? null
+            : message.ToolCalls.Select(MapHistoricalToolCall).ToArray();
+
+        return new OllamaRequestMessage(
             message.Role switch
             {
                 ConversationRole.System => "system",
@@ -271,7 +327,149 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 ConversationRole.Assistant => "assistant",
                 _ => throw new InvalidOperationException("Unsupported conversation role.")
             },
-            message.Content);
+            message.Content ?? string.Empty,
+            toolCalls);
+    }
+
+    private static OllamaRequestMessage MapToolResult(ToolCallResult toolResult) =>
+        new(
+            "tool",
+            SerializeToolResult(toolResult.Result),
+            ToolName: toolResult.ToolName);
+
+    private static OllamaToolCall MapHistoricalToolCall(ToolCallRequest toolCall) =>
+        new()
+        {
+            Type = "function",
+            Function = new OllamaToolCallFunction
+            {
+                Name = toolCall.ToolName,
+                Arguments = JsonSerializer.SerializeToElement(
+                    toolCall.Arguments,
+                    toolCall.Arguments.GetType(),
+                    ToolJsonOptions)
+            }
+        };
+
+    private static OllamaToolDefinition MapToolDefinition(LlmToolDefinition tool)
+    {
+        var schema = JsonSchemaExporter.GetJsonSchemaAsNode(
+            ToolJsonOptions,
+            tool.ArgumentsType,
+            SchemaOptions);
+        if (schema is not JsonObject)
+        {
+            throw new NotSupportedException(
+                $"Tool arguments for '{tool.Name}' do not produce an object schema.");
+        }
+
+        return new OllamaToolDefinition(
+            "function",
+            new OllamaToolFunctionDefinition(tool.Name, tool.Description, schema));
+    }
+
+    private static string SerializeToolResult(ToolExecutionResult result)
+    {
+        JsonElement? data = result.Data is null
+            ? null
+            : JsonSerializer.SerializeToElement(
+                result.Data,
+                result.Data.GetType(),
+                ToolJsonOptions);
+        var message = result.UserMessage
+            ?? (result.Success ? null : "The tool failed.");
+
+        return JsonSerializer.Serialize(
+            new OllamaToolResultContent(result.Success, data, message),
+            ToolJsonOptions);
+    }
+
+    private static ParsedToolCalls ParseToolCalls(
+        IReadOnlyList<OllamaToolCall?>? providerToolCalls,
+        IReadOnlyList<LlmToolDefinition> availableTools)
+    {
+        if (providerToolCalls is null || providerToolCalls.Count == 0)
+        {
+            return ParsedToolCalls.Succeeded([]);
+        }
+
+        var definitionsByName = availableTools.ToDictionary(
+            tool => tool.Name,
+            StringComparer.Ordinal);
+        var calls = new List<ToolCallRequest>(providerToolCalls.Count);
+        var callIds = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < providerToolCalls.Count; index++)
+        {
+            var providerCall = providerToolCalls[index];
+            var function = providerCall?.Function;
+            if (providerCall is null
+                || (!string.IsNullOrWhiteSpace(providerCall.Type)
+                    && !string.Equals(providerCall.Type, "function", StringComparison.Ordinal))
+                || function is null
+                || string.IsNullOrWhiteSpace(function.Name))
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned invalid tool-call arguments.");
+            }
+
+            if (!definitionsByName.TryGetValue(function.Name, out var definition))
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.Unsupported,
+                    "Ollama requested a tool that is not available.");
+            }
+
+            if (function.Arguments.ValueKind != JsonValueKind.Object)
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned invalid tool-call arguments.");
+            }
+
+            IToolArguments? arguments;
+            try
+            {
+                arguments = function.Arguments.Deserialize(
+                    definition.ArgumentsType,
+                    ToolJsonOptions) as IToolArguments;
+            }
+            catch (JsonException)
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned invalid tool-call arguments.");
+            }
+            catch (NotSupportedException)
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned unsupported tool-call arguments.");
+            }
+
+            if (arguments is null)
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned invalid tool-call arguments.");
+            }
+
+            var callId = string.IsNullOrWhiteSpace(providerCall.Id)
+                ? $"ollama-call-{index + 1}"
+                : providerCall.Id;
+            if (!callIds.Add(callId))
+            {
+                return ParsedToolCalls.Failed(
+                    FailureCode.InvalidArguments,
+                    "Ollama returned duplicate tool-call identifiers.");
+            }
+
+            calls.Add(new ToolCallRequest(callId, definition.Name, arguments));
+        }
+
+        return ParsedToolCalls.Succeeded(calls);
+    }
 
     private Failure MapHttpFailure(HttpStatusCode statusCode, bool modelRequest) =>
         statusCode switch
@@ -299,18 +497,6 @@ public sealed class OllamaLlmProvider : ILlmProvider
                 FailureCode.ExecutionFailed,
                 "The Ollama request failed.")
         };
-
-    private static bool ContainsToolCalls(JsonElement? toolCalls)
-    {
-        if (toolCalls is null
-            || toolCalls.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-        {
-            return false;
-        }
-
-        return toolCalls.Value.ValueKind != JsonValueKind.Array
-            || toolCalls.Value.GetArrayLength() > 0;
-    }
 
     private LlmProviderResult InvalidResponse(string message, long startedAt)
     {
@@ -347,6 +533,32 @@ public sealed class OllamaLlmProvider : ILlmProvider
 
     private static long GetElapsedMilliseconds(long startedAt) =>
         (long)Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds;
+
+    private sealed record OllamaToolResultContent(
+        bool Success,
+        JsonElement? Data,
+        string? Message);
+
+    private sealed record ParsedToolCalls
+    {
+        private ParsedToolCalls(
+            IReadOnlyList<ToolCallRequest> toolCalls,
+            Failure? failure)
+        {
+            ToolCalls = toolCalls;
+            Failure = failure;
+        }
+
+        public IReadOnlyList<ToolCallRequest> ToolCalls { get; }
+
+        public Failure? Failure { get; }
+
+        public static ParsedToolCalls Succeeded(IReadOnlyList<ToolCallRequest> toolCalls) =>
+            new(toolCalls, failure: null);
+
+        public static ParsedToolCalls Failed(FailureCode code, string message) =>
+            new([], new Failure(code, message));
+    }
 }
 
 public sealed record OllamaAvailabilityResult

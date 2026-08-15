@@ -155,11 +155,13 @@ Provider failures and tool failures should be distinguishable.
 Risk: Safe
 
 Input:
-- application name or known application alias.
+- logical application identifier.
 
 Rules:
-- resolve only known/installed applications.
-- do not interpret the argument as a shell command.
+- resolve only through an explicitly configured trusted application catalog,
+- pass only the catalog executable to the Windows process launcher,
+- never accept caller-provided executable paths or command-line arguments,
+- reject command interpreters and script hosts from the v0.1 catalog.
 
 ### open_url
 Risk: Safe
@@ -235,6 +237,14 @@ Initial registry behavior:
 
 `IPermissionEvaluator` determines required behavior from trusted tool metadata and application policy.
 
+v0.1 mapping:
+
+```text
+Safe     -> Allow
+Confirm  -> RequireConfirmation
+Critical -> Deny
+```
+
 The LLM must never provide:
 
 ```text
@@ -244,6 +254,8 @@ permissionOverride
 ```
 
 as authoritative inputs.
+
+The evaluator does not resolve or execute tools.
 
 ## 11. Confirmation
 
@@ -270,7 +282,19 @@ Continue?
 
 for meaningful changes.
 
+Confirmation validation binds an approval to the exact request identifier, tool
+name and opaque action fingerprint. The approval is invalid when any binding value
+differs, the result is not approved, or `ExpiresAt <= current time`.
+
 ## 12. Tool-call loop
+
+The AI provider boundary exposes only a tool's stable name, description and typed
+argument schema. Risk level, permission rules and confirmation state are trusted
+application policy and must never be included in model-visible tool definitions.
+
+AI-002 maps native provider calls into typed Core requests and maps bound tool
+results back into provider history. It does not resolve, authorize or execute a
+tool. Those responsibilities belong to the TOOL-002 execution pipeline.
 
 Pseudo-flow:
 

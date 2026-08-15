@@ -1,8 +1,10 @@
 using System.Windows;
 using Jarvis.AI.Ollama;
 using Jarvis.Core.AI;
+using Jarvis.Core.Permissions;
 using Jarvis.Core.Tools;
 using Jarvis.Desktop.Configuration;
+using Jarvis.Tools.Windows.Applications;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -43,6 +45,10 @@ public partial class App : Application
                 "Jarvis:Llm:TimeoutSeconds must be greater than zero.")
             .ValidateOnStart();
 
+        builder.Services
+            .AddOptions<WindowsToolsOptions>()
+            .Bind(builder.Configuration.GetSection(WindowsToolsOptions.SectionName));
+
         builder.Services.AddHttpClient<OllamaLlmProvider>((services, client) =>
         {
             var options = services.GetRequiredService<Microsoft.Extensions.Options.IOptions<OllamaOptions>>().Value;
@@ -51,6 +57,16 @@ public partial class App : Application
         });
         builder.Services.AddTransient<ILlmProvider>(
             services => services.GetRequiredService<OllamaLlmProvider>());
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<IPermissionEvaluator, PermissionEvaluator>();
+        builder.Services.AddSingleton<IConfirmationValidator, ConfirmationValidator>();
+        builder.Services.AddSingleton<IApplicationCatalog>(services =>
+            new ConfiguredApplicationCatalog(
+                services.GetRequiredService<Microsoft.Extensions.Options.IOptions<WindowsToolsOptions>>()
+                    .Value
+                    .Applications));
+        builder.Services.AddSingleton<IApplicationProcessLauncher, WindowsApplicationProcessLauncher>();
+        builder.Services.AddSingleton<IJarvisTool, OpenApplicationTool>();
         builder.Services.AddTransient<IToolRegistry, ToolRegistry>();
 
         builder.Services.AddSingleton<MainWindow>();

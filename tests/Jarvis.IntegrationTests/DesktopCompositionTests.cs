@@ -1,8 +1,10 @@
 using Jarvis.AI.Ollama;
 using Jarvis.Core.AI;
+using Jarvis.Core.Permissions;
 using Jarvis.Core.Tools;
 using Jarvis.Desktop;
 using Jarvis.Desktop.Configuration;
+using Jarvis.Tools.Windows.Applications;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -26,8 +28,48 @@ public sealed class DesktopCompositionTests
             Assert.Equal("JARVIS Test", options.ApplicationName);
             Assert.True(registrationProbe.IsService(typeof(MainWindow)));
             Assert.IsType<OllamaLlmProvider>(host.Services.GetRequiredService<ILlmProvider>());
-            Assert.Empty(host.Services.GetRequiredService<IToolRegistry>().Descriptors);
+            Assert.Single(host.Services.GetRequiredService<IToolRegistry>().Descriptors);
+            Assert.IsType<PermissionEvaluator>(host.Services.GetRequiredService<IPermissionEvaluator>());
+            Assert.IsType<ConfirmationValidator>(host.Services.GetRequiredService<IConfirmationValidator>());
+            Assert.Same(TimeProvider.System, host.Services.GetRequiredService<TimeProvider>());
             Assert.NotNull(host.Services.GetService<ILoggerFactory>());
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task BuildHost_RegistersOpenApplicationToolWithSafePermission()
+    {
+        using var host = App.BuildHost([]);
+
+        await host.StartAsync();
+
+        try
+        {
+            var resolution = host.Services
+                .GetRequiredService<IToolRegistry>()
+                .Resolve("open_application");
+
+            Assert.True(resolution.Success);
+            var tool = Assert.IsType<OpenApplicationTool>(resolution.Tool);
+            Assert.Equal(ToolRiskLevel.Safe, tool.Descriptor.RiskLevel);
+
+            var context = new ToolExecutionContext(
+                "request-1",
+                "session-1",
+                new OpenApplicationArguments("notepad"));
+            var decision = host.Services
+                .GetRequiredService<IPermissionEvaluator>()
+                .Evaluate(tool.Descriptor, context);
+
+            Assert.Equal(PermissionDecision.Allow, decision);
+
+            var catalog = host.Services.GetRequiredService<IApplicationCatalog>();
+            Assert.True(catalog.TryGet("notepad", out var application));
+            Assert.Equal("notepad.exe", application?.Executable);
         }
         finally
         {

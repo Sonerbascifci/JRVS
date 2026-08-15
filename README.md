@@ -47,6 +47,6 @@ See:
 
 ## Current phase
 
-**TOOL-001 — Tool Registry** is complete.
+**AI-002 — Structured Tool Calling** is complete.
 
-The next backlog item is **SEC-001 — Permission Engine**.
+The next backlog item is **TOOL-002 — Tool Execution Pipeline**.
