@@ -1,0 +1,22 @@
+{
+  "project": "JARVIS",
+  "created_for": "Codex starter pack",
+  "files": [
+    ".env.example",
+    ".gitignore",
+    "AGENTS.md",
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/CODEX_FIRST_PROMPT.md",
+    "docs/DECISIONS.md",
+    "docs/DEFINITION_OF_DONE.md",
+    "docs/DEVELOPMENT_STANDARDS.md",
+    "docs/LOCAL_AI_STACK.md",
+    "docs/PROJECT_CONTEXT.md",
+    "docs/ROADMAP.md",
+    "docs/SECURITY.md",
+    "docs/TEST_STRATEGY.md",
+    "docs/TOOL_SYSTEM.md"
+  ],
+  "first_backlog_item": "FOUND-001 — Solution Foundation"
+}

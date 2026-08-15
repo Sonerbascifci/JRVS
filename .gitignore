@@ -1,0 +1,44 @@
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# Rider / JetBrains
+.idea/
+
+# VS Code
+.vscode/
+
+# Local config / secrets
+.env
+appsettings.Local.json
+secrets.json
+
+# Databases / runtime state
+*.db
+*.db-shm
+*.db-wal
+
+# AI/audio model assets
+models/
+*.gguf
+*.onnx
+*.bin
+*.pt
+*.pth
+
+# Logs
+logs/
+*.log
+
+# Python sidecar caches / env
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+Thumbs.db
+.DS_Store
